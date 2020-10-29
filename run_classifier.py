@@ -30,7 +30,7 @@ flags = tf.flags
 
 FLAGS = flags.FLAGS
 
-## Required parameters
+# Required parameters
 flags.DEFINE_string(
     "data_dir", None,
     "The input data dir. Should contain the .tsv files (or other data files) "
@@ -50,8 +50,7 @@ flags.DEFINE_string(
     "output_dir", None,
     "The output directory where the model checkpoints will be written.")
 
-## Other parameters
-
+# Other parameters
 flags.DEFINE_string(
     "init_checkpoint", None,
     "Initial checkpoint (usually from a pre-trained BERT model).")
@@ -145,6 +144,7 @@ class InputExample(object):
         self.label = label
 
 
+# TPU上需要examples的数目是batch_size的整数倍 padding使用的Fake InputExample
 class PaddingInputExample(object):
     """Fake example so the num input examples is a multiple of the batch size.
 
@@ -206,6 +206,9 @@ class DataProcessor(object):
 
 class XnliProcessor(DataProcessor):
     """Processor for the XNLI data set."""
+
+    def get_test_examples(self, data_dir):
+        pass
 
     def __init__(self):
         self.language = "zh"
@@ -275,7 +278,8 @@ class MnliProcessor(DataProcessor):
         """See base class."""
         return ["contradiction", "entailment", "neutral"]
 
-    def _create_examples(self, lines, set_type):
+    @staticmethod
+    def _create_examples(lines, set_type):
         """Creates examples for the training and dev sets."""
         examples = []
         for (i, line) in enumerate(lines):
@@ -315,7 +319,8 @@ class MrpcProcessor(DataProcessor):
         """See base class."""
         return ["0", "1"]
 
-    def _create_examples(self, lines, set_type):
+    @staticmethod
+    def _create_examples(lines, set_type):
         """Creates examples for the training and dev sets."""
         examples = []
         for (i, line) in enumerate(lines):
@@ -355,7 +360,8 @@ class ColaProcessor(DataProcessor):
         """See base class."""
         return ["0", "1"]
 
-    def _create_examples(self, lines, set_type):
+    @staticmethod
+    def _create_examples(lines, set_type):
         """Creates examples for the training and dev sets."""
         examples = []
         for (i, line) in enumerate(lines):
@@ -588,6 +594,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
     #
     # If you want to use the token-level output, use model.get_sequence_output()
     # instead.
+    # 获取句子级别的输出 [batch_size, hidden_size] 一个句子对 对应一个embedding，之后对这个embedding做相应的处理输出label
     output_layer = model.get_pooled_output()
 
     hidden_size = output_layer.shape[-1].value
@@ -604,6 +611,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
             # I.e., 0.1 dropout
             output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
 
+        # logits: [batch_size, num_labels]
         logits = tf.matmul(output_layer, output_weights, transpose_b=True)
         logits = tf.nn.bias_add(logits, output_bias)
         probabilities = tf.nn.softmax(logits, axis=-1)
@@ -611,10 +619,11 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
 
         one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
 
+        # 交叉熵的一种优化实现方法
         per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
         loss = tf.reduce_mean(per_example_loss)
 
-        return (loss, per_example_loss, logits, probabilities)
+        return loss, per_example_loss, logits, probabilities
 
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
@@ -652,7 +661,6 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
             (assignment_map, initialized_variable_names
              ) = modeling.get_assignment_map_from_checkpoint(tvars, init_checkpoint)
             if use_tpu:
-
                 def tpu_scaffold():
                     tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
                     return tf.train.Scaffold()
@@ -661,6 +669,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
             else:
                 tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
 
+        # 打印训练变量
         tf.logging.info("**** Trainable Variables ****")
         for var in tvars:
             init_string = ""
@@ -681,8 +690,13 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                 train_op=train_op,
                 scaffold_fn=scaffold_fn)
         elif mode == tf.estimator.ModeKeys.EVAL:
-
             def metric_fn(per_example_loss, label_ids, logits, is_real_example):
+                """
+                @param is_real_example:
+                @param logits:
+                @param label_ids:
+                @type per_example_loss: object
+                """
                 predictions = tf.argmax(logits, axis=-1, output_type=tf.int32)
                 accuracy = tf.metrics.accuracy(
                     labels=label_ids, predictions=predictions, weights=is_real_example)
