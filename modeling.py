@@ -920,6 +920,7 @@ def get_shape_list(tensor, expected_rank=None, name=None):
     non_static_indexes = []
     for (index, dim) in enumerate(shape):
         if dim is None:
+    # 保存None纬度的index
             non_static_indexes.append(index)
 
     if not non_static_indexes:
