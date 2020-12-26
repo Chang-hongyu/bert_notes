@@ -914,6 +914,7 @@ def get_shape_list(tensor, expected_rank=None, name=None):
     if expected_rank is not None:
         assert_rank(tensor, expected_rank, name)
 
+    # 静态的 不需session运行即可显示出形状 会存在None
     shape = tensor.shape.as_list()
 
     non_static_indexes = []
@@ -924,6 +925,7 @@ def get_shape_list(tensor, expected_rank=None, name=None):
     if not non_static_indexes:
         return shape
 
+    # 动态的 session运行时显示出形状 会显示出None对应的形状 完整形状
     dyn_shape = tf.shape(tensor)
     for index in non_static_indexes:
         shape[index] = dyn_shape[index]
